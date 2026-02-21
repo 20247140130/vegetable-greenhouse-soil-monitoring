@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>阈值设置</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/main.js"></script>
+</head>
+<body>
+    <div class="header">蔬菜大棚土壤墒情监测平台</div>
+    <div class="nav" style="text-align:center; margin:15px;">
+        <a href="/">实时监控</a>
+        <a href="/history">历史数据</a>
+        <a href="/threshold" class="active">阈值设置</a>
+    </div>
+
+    <h2 style="text-align:center;">阈值设置</h2>
+    <div style="max-width:400px; margin:40px auto; background:white; padding:30px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.1);">
+        <select id="node" style="width:100%; padding:8px; margin-bottom:15px;">
+            <option value="Node1">Node1</option>
+            <option value="Node2">Node2</option>
+            <option value="Node3">Node3</option>
+        </select>
+        <p>温度阈值：</p>
+        下限 <input id="tmin" value="15" style="width:80px;"> ℃　上限 <input id="tmax" value="30" style="width:80px;"> ℃<br><br>
+        <p>湿度阈值：</p>
+        下限 <input id="hmin" value="50" style="width:80px;"> %　上限 <input id="hmax" value="80" style="width:80px;"> %<br><br>
+        <button onclick="saveThreshold()" style="width:100%; padding:12px; background:#0066cc; color:white; border:none; border-radius:6px; font-size:16px;">保存阈值（立即生效）</button>
+    </div>
+</body>
+</html>

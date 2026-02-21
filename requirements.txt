@@ -1,0 +1,5 @@
+Flask==3.0.3
+mysql-connector-python==9.0.0
+redis==5.0.8
+paho-mqtt==1.6.1
+pandas==2.2.2

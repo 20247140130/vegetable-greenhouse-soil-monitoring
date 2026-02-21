@@ -1,0 +1,6 @@
+body {font-family: "Microsoft YaHei", Arial, sans-serif; margin:0; background:#f4f6f9; color:#333;}
+.header {background: linear-gradient(135deg, #0066cc, #0099ff); color:white; padding:20px; text-align:center; font-size:26px;}
+.nav a {margin:0 10px; padding:10px 25px; text-decoration:none; color:#333; background:white; border-radius:8px; transition:0.3s;}
+.nav a:hover, .nav a.active {background:#0066cc; color:white;}
+.card {width:280px; padding:18px; background:white; border-radius:12px; box-shadow:0 6px 20px rgba(0,102,204,0.15); margin-bottom:15px;}
+.card.alert {border-left:6px solid #ff4444; background:#fff0f0;}

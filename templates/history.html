@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>历史数据</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4/dist/echarts.min.js"></script>
+    <script src="/static/js/main.js"></script>
+</head>
+<body>
+    <div class="header">蔬菜大棚土壤墒情监测平台</div>
+    <div class="nav" style="text-align:center; margin:15px;">
+        <a href="/">实时监控</a>
+        <a href="/history" class="active">历史数据</a>
+        <a href="/threshold">阈值设置</a>
+    </div>
+
+    <h2 style="text-align:center;">历史墒情查询</h2>
+    <div style="text-align:center; margin:20px;">
+        节点: <input id="node" value="Node1" style="width:100px;">
+        开始时间: <input id="start" type="datetime-local">
+        结束时间: <input id="end" type="datetime-local">
+        <button onclick="queryHistory()" style="padding:8px 20px;">查询</button>
+    </div>
+    <div id="history-chart" style="height:500px; margin:20px;"></div>
+</body>
+</html>

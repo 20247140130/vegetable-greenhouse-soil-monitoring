@@ -2,26 +2,175 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>历史数据</title>
-    <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4/dist/echarts.min.js"></script>
-    <script src="/static/js/main.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>历史数据 - 蔬菜大棚土壤墒情监测平台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body { background: #f8f9fa; }
+        .table th { background: #198754; color: white; }
+    </style>
 </head>
 <body>
-    <div class="header">蔬菜大棚土壤墒情监测平台</div>
-    <div class="nav" style="text-align:center; margin:15px;">
-        <a href="/">实时监控</a>
-        <a href="/history" class="active">历史数据</a>
-        <a href="/threshold">阈值设置</a>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-success">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">🌱 蔬菜大棚土壤墒情监测平台</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/">实时监控</a>
+                <a class="nav-link active" href="/history">历史数据</a>
+                <a class="nav-link" href="/threshold">阈值设置</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h2 class="text-center mb-4">土壤墒情历史数据查询</h2>
+
+        <!-- 查询表单 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">监测节点</label>
+                        <select id="nodeSelect" class="form-select">
+                            <option value="Node1">Node1</option>
+                            <option value="Node2">Node2</option>
+                            <option value="Node3">Node3</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">开始时间</label>
+                        <input type="datetime-local" id="startTime" class="form-control">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">结束时间</label>
+                        <input type="datetime-local" id="endTime" class="form-control">
+                    </div>
+                    <div class="col-md-1 d-flex align-items-end">
+                        <button onclick="queryHistory()" class="btn btn-success w-100">查询</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 历史曲线 -->
+        <div class="card mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">历史温湿度变化曲线</h5>
+            </div>
+            <div class="card-body">
+                <div id="historyChart" style="width:100%; height:500px;"></div>
+            </div>
+        </div>
+
+        <!-- 数据表格 + 导出 -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between">
+                <h5 class="mb-0">历史数据明细</h5>
+                <button onclick="exportToCSV()" class="btn btn-outline-success btn-sm">📥 导出 Excel (CSV)</button>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0" id="historyTable">
+                    <thead>
+                        <tr>
+                            <th>采集时间</th>
+                            <th>节点</th>
+                            <th>温度 (℃)</th>
+                            <th>湿度 (%RH)</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
-    <h2 style="text-align:center;">历史墒情查询</h2>
-    <div style="text-align:center; margin:20px;">
-        节点: <input id="node" value="Node1" style="width:100px;">
-        开始时间: <input id="start" type="datetime-local">
-        结束时间: <input id="end" type="datetime-local">
-        <button onclick="queryHistory()" style="padding:8px 20px;">查询</button>
-    </div>
-    <div id="history-chart" style="height:500px; margin:20px;"></div>
+    <script>
+        let historyChart = echarts.init(document.getElementById('historyChart'));
+
+        function queryHistory() {
+            const node = document.getElementById('nodeSelect').value;
+            const start = document.getElementById('startTime').value;
+            const end = document.getElementById('endTime').value;
+
+            if (!start || !end) {
+                alert("请选择开始和结束时间！");
+                return;
+            }
+
+            fetch(`/api/history?node_id=${node}&start_time=${start}&end_time=${end}`)
+                .then(res => res.json())
+                .then(res => {
+                    if (res.code !== 200) return;
+
+                    // 更新表格
+                    let tbody = document.querySelector('#historyTable tbody');
+                    tbody.innerHTML = '';
+                    res.data.forEach(item => {
+                        let tr = `<tr>
+                            <td>${item.collect_time}</td>
+                            <td>${node}</td>
+                            <td>${item.temp}</td>
+                            <td>${item.hum}</td>
+                        </tr>`;
+                        tbody.innerHTML += tr;
+                    });
+
+                    // 更新图表
+                    let tempData = [], humData = [];
+                    res.data.forEach(item => {
+                        let ts = new Date(item.collect_time).getTime();
+                        tempData.push([ts, item.temp]);
+                        humData.push([ts, item.hum]);
+                    });
+
+                    historyChart.setOption({
+                        title: { text: `${node} 历史墒情曲线`, left: 'center' },
+                        tooltip: { trigger: 'axis' },
+                        legend: { data: ['温度(℃)', '湿度(%RH)'], top: 20 },
+                        xAxis: { type: 'time' },
+                        yAxis: [
+                            { name: '温度(℃)', type: 'value', min: 0, max: 50 },
+                            { name: '湿度(%RH)', type: 'value', min: 0, max: 100, offset: 60 }
+                        ],
+                        series: [
+                            { name: '温度(℃)', type: 'line', data: tempData, smooth: true },
+                            { name: '湿度(%RH)', type: 'line', data: humData, smooth: true }
+                        ]
+                    });
+                });
+        }
+
+        function exportToCSV() {
+            let rows = document.querySelectorAll('#historyTable tr');
+            let csv = "采集时间,节点,温度(℃),湿度(%RH)\n";
+            rows.forEach(row => {
+                let cells = row.querySelectorAll('td');
+                if (cells.length) {
+                    csv += Array.from(cells).map(cell => cell.textContent).join(',') + '\n';
+                }
+            });
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `土壤墒情历史数据_${new Date().toISOString().slice(0,10)}.csv`;
+            link.click();
+        }
+
+        // 默认显示最近24小时 Node1
+        window.onload = () => {
+            const now = new Date();
+            const start = new Date(now.getTime() - 24*60*60*1000);
+            document.getElementById('startTime').value = start.toISOString().slice(0,16);
+            document.getElementById('endTime').value = now.toISOString().slice(0,16);
+            queryHistory();
+        };
+
+        window.addEventListener('resize', () => historyChart.resize());
+    </script>
+
+    <footer class="text-center py-3 mt-5 text-muted">
+        © 2026 王健 大连东软信息学院 | GitHub: 20247140130
+    </footer>
 </body>
 </html>

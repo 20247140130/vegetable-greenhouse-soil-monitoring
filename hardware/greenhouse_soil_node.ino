@@ -95,7 +95,7 @@ void loop() {
     sensors.requestTemperatures();
     float temp = sensors.getTempCByIndex(0);
     int rawHum = analogRead(SOIL_MOISTURE_PIN);
-    float hum = map(rawHum, 4095, 0, 0, 100);   // 两点标定（论文已说明）
+    float hum = map(rawHum, 4095, 0, 0, 100);   // 两点标定
 
     if (isnan(temp) || hum < 0 || hum > 100) {
       Serial.println("传感器读取失败，跳过本次");
@@ -132,4 +132,5 @@ void loop() {
     delay(1000);   // 调试模式每秒检查一次
   }
 }
+
 

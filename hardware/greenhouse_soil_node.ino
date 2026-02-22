@@ -12,7 +12,7 @@
 #include <ArduinoJson.h>
 #include <esp_sleep.h>        // Deep Sleep 必须
 
-// ====================== 用户配置区（必须修改） ======================
+// ====================== 用户配置区 ======================
 const char* ssid = "Greenhouse_WiFi";           // ← 改成你的大棚WiFi
 const char* password = "12345678";
 
@@ -132,3 +132,4 @@ void loop() {
     delay(1000);   // 调试模式每秒检查一次
   }
 }
+

@@ -17,7 +17,7 @@ try:
         read_timeout=30,
         write_timeout=30
     )
-    mysql_cursor = mysql_db.cursor(dictionary=True)   # ← 改成字典模式，更安全
+    mysql_cursor = mysql_db.cursor(dictionary=True)   # 字典模式，更安全
     redis_db = redis.Redis(host="localhost", port=6379, db=0, 
                            decode_responses=True, socket_timeout=10)
 except Exception as e:
@@ -25,7 +25,7 @@ except Exception as e:
     exit(1)
 
 # =============================
-# 数据清洗函数（保持不变）
+# 数据清洗函数
 # =============================
 def clean_soil_data(df):
     df = df.dropna(subset=["node_id", "temp", "hum", "collect_time"])
@@ -36,7 +36,7 @@ def clean_soil_data(df):
     return df
 
 # =============================
-# 核心：增量清洗（已修复）
+# 核心：增量清洗
 # =============================
 try:
     # 获取已清洗的最大id（使用显式列名）
@@ -106,3 +106,4 @@ finally:
     mysql_cursor.close()
     mysql_db.close()
     redis_db.close()
+

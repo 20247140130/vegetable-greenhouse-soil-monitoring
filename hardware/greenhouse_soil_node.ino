@@ -1,7 +1,7 @@
-// ==================== 蔬菜大棚土壤墒情监测节点（太阳能低功耗版） ====================
-// 作者：王健（2026优化版）
-// 功能：土壤温湿度采集 + MQTT阿里云 + Deep Sleep低功耗（适合太阳能）
-// 硬件：ESP32 + 电容土壤湿度v1.2 + DS18B20 + 太阳能供电
+// ================================================
+// greenhouse_soil_node.ino  【最终优化稳定版】
+// 作者：王健  优化日期：2026.2.22
+// ================================================
 
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -10,46 +10,52 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <ArduinoJson.h>
-#include <esp_sleep.h>          // ← 新增：Deep Sleep 支持
+#include <esp_sleep.h>        // Deep Sleep 必须
 
 // ====================== 用户配置区（必须修改） ======================
 const char* ssid = "Greenhouse_WiFi";           // ← 改成你的大棚WiFi
-const char* password = "12345678";              // ← WiFi密码
+const char* password = "12345678";
 
 const char* mqtt_server = "iot-06z00e09s0b5m8t.mqtt.iothub.aliyuncs.com";
 const int mqtt_port = 1883;
-const char* node_id = "Node1";                  // Node1 / Node2 / Node3
+const char* node_id = "Node1";                  // Node1/Node2/Node3
 
-#define USE_DEEP_SLEEP 1        // ← 1=开启太阳能低功耗模式（推荐）  0=关闭（调试用）
-const long interval = 30000;    // 采集间隔 30秒
+// 阿里云一机一密认证（必须填写！在阿里云控制台复制）
+const char* mqtt_username = "你的DeviceName";   // ← 改成阿里云生成的 DeviceName
+const char* mqtt_password = "你的DeviceSecret"; // ← 改成阿里云生成的 DeviceSecret（完整字符串）
 
-// ====================== 引脚定义 ======================
+#define USE_DEEP_SLEEP 1        // 1=开启低功耗（推荐太阳能） 0=关闭（调试用）
+const unsigned long interval = 30000;  // 30秒采集一次
+
+// ====================== 引脚 & 对象 ======================
 #define ONE_WIRE_BUS 4
 #define SOIL_MOISTURE_PIN 34
 
-// ====================== 对象初始化 ======================
 WiFiClient espClient;
 PubSubClient client(espClient);
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 28800); // UTC+8
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 28800); // 东八区
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 
 // ====================== 全局变量 ======================
-unsigned long bootTime = 0;
+unsigned long previousMillis = 0;
 
-// ====================== MQTT重连 ======================
+// ====================== MQTT重连（带认证） ======================
 void reconnect() {
   while (!client.connected()) {
-    if (client.connect(node_id)) {
-      Serial.println("MQTT连接成功");
+    Serial.print("尝试连接MQTT...");
+    if (client.connect(node_id, mqtt_username, mqtt_password)) {
+      Serial.println("MQTT连接成功！");
     } else {
+      Serial.print("失败 rc=");
+      Serial.println(client.state());
       delay(5000);
     }
   }
 }
 
-// ====================== 获取时间 ======================
+// ====================== 获取标准时间 ======================
 String getFormattedTime() {
   timeClient.update();
   time_t rawtime = timeClient.getEpochTime();
@@ -73,7 +79,6 @@ void setup() {
   Serial.println("\nWiFi已连接 IP: " + WiFi.localIP().toString());
 
   client.setServer(mqtt_server, mqtt_port);
-  bootTime = millis();
   Serial.println("系统启动完成！低功耗模式：" + String(USE_DEEP_SLEEP ? "已开启" : "已关闭"));
 }
 
@@ -82,43 +87,48 @@ void loop() {
   if (!client.connected()) reconnect();
   client.loop();
 
-  // 采集数据
-  sensors.requestTemperatures();
-  float temp = sensors.getTempCByIndex(0);
-  int rawHum = analogRead(SOIL_MOISTURE_PIN);
-  float hum = map(rawHum, 4095, 0, 0, 100);
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
 
-  if (isnan(temp) || hum < 0 || hum > 100) {
-    Serial.println("传感器读取失败");
-  } else {
-    String currentTime = getFormattedTime();
-    Serial.printf("采集成功 → %.1f°C  %.1f%%  %s\n", temp, hum, currentTime.c_str());
+    // 采集数据
+    sensors.requestTemperatures();
+    float temp = sensors.getTempCByIndex(0);
+    int rawHum = analogRead(SOIL_MOISTURE_PIN);
+    float hum = map(rawHum, 4095, 0, 0, 100);   // 两点标定（论文已说明）
 
-    StaticJsonDocument<200> doc;
-    doc["node_id"] = node_id;
-    doc["temp"] = round(temp * 10) / 10.0;
-    doc["hum"] = round(hum * 10) / 10.0;
-    doc["time"] = currentTime;
+    if (isnan(temp) || hum < 0 || hum > 100) {
+      Serial.println("传感器读取失败，跳过本次");
+    } else {
+      String currentTime = getFormattedTime();
+      Serial.printf("采集成功 → %.1f°C  %.1f%%  %s\n", temp, hum, currentTime.c_str());
 
-    char jsonBuffer[256];
-    serializeJson(doc, jsonBuffer);
+      StaticJsonDocument<200> doc;
+      doc["node_id"] = node_id;
+      doc["temp"] = round(temp * 10) / 10.0;
+      doc["hum"] = round(hum * 10) / 10.0;
+      doc["time"] = currentTime;
 
-    if (client.publish("greenhouse/soil/data", jsonBuffer)) {
-      Serial.println("✅ 已成功上传阿里云");
+      char jsonBuffer[256];
+      serializeJson(doc, jsonBuffer);
+
+      if (client.publish("greenhouse/soil/data", jsonBuffer)) {
+        Serial.println("数据已成功上传阿里云");
+      } else {
+        Serial.println("上传失败，将在下次重试");
+      }
     }
   }
 
-  // ====================== 太阳能低功耗休眠 ======================
+  // ====================== 低功耗休眠 ======================
   if (USE_DEEP_SLEEP) {
-    unsigned long workTime = millis() - bootTime;
-    uint64_t sleepTime = (interval > workTime) ? (interval - workTime) * 1000 : 1000000; // 至少睡1秒
-
-    Serial.printf("即将休眠 %.1f 秒（节能模式）\n", sleepTime / 1000000.0);
-    delay(100); // 给串口输出时间
+    uint64_t sleepTime = interval * 1000ULL;   // 转换为微秒
+    Serial.printf("即将进入深度睡眠 %.1f 秒（节能模式）\n", sleepTime / 1000000.0);
+    delay(100);  // 给串口输出时间
 
     esp_sleep_enable_timer_wakeup(sleepTime);
-    esp_deep_sleep_start();   // ← 进入深度睡眠
+    esp_deep_sleep_start();   // 进入深度睡眠，唤醒后从setup重新开始
   } else {
-    delay(interval);   // 调试模式正常延时
+    delay(1000);   // 调试模式每秒检查一次
   }
 }

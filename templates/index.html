@@ -2,21 +2,151 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>实时监控 - 土壤墒情监测平台</title>
-    <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4/dist/echarts.min.js"></script>
-    <script src="/static/js/main.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>蔬菜大棚土壤墒情监测平台 - 实时监控</title>
+    <!-- Bootstrap + ECharts CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body { background: #f8f9fa; }
+        .card { transition: all 0.3s; }
+        .card.alert { border-color: #dc3545; background: #fff5f5; }
+        .status-normal { color: #28a745; }
+        .status-alert { color: #dc3545; animation: flash 1s infinite; }
+        @keyframes flash { 50% { opacity: 0.6; } }
+    </style>
 </head>
 <body>
-    <div class="header">蔬菜大棚土壤墒情监测平台</div>
-    <div class="nav" style="text-align:center; margin:15px;">
-        <a href="/" class="active">实时监控</a>
-        <a href="/history">历史数据</a>
-        <a href="/threshold">阈值设置</a>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-success">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">🌱 蔬菜大棚土壤墒情监测平台</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link active" href="/">实时监控</a>
+                <a class="nav-link" href="/history">历史数据</a>
+                <a class="nav-link" href="/threshold">阈值设置</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h2 class="text-center mb-4">实时土壤墒情监控</h2>
+
+        <!-- 节点数据卡片 -->
+        <div class="row g-3" id="nodeCards">
+            <!-- JS 动态生成 3 个卡片 -->
+        </div>
+
+        <!-- 实时曲线图 -->
+        <div class="card mt-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">土壤温湿度实时变化趋势</h5>
+            </div>
+            <div class="card-body">
+                <div id="realtime-chart" style="width: 100%; height: 500px;"></div>
+            </div>
+        </div>
+
+        <!-- 预警信息 -->
+        <div class="alert alert-info mt-3" id="alertBox" style="display: none;">
+            <strong>⚠️ 预警提示：</strong> <span id="alertContent"></span>
+        </div>
     </div>
 
-    <h2 style="text-align:center; margin:20px;">实时土壤墒情</h2>
-    <div id="cards" style="display:flex; gap:15px; flex-wrap:wrap; padding:20px;"></div>
-    <div id="realtime-chart" style="height:450px; margin:20px;"></div>
+    <script>
+        let myChart = echarts.init(document.getElementById('realtime-chart'));
+        let chartOption = {
+            title: { text: '实时墒情曲线', left: 'center' },
+            tooltip: { trigger: 'axis' },
+            legend: { data: ['温度(℃)', '湿度(%RH)'], top: 20 },
+            xAxis: { type: 'time', boundaryGap: false },
+            yAxis: [
+                { name: '温度(℃)', type: 'value', min: 0, max: 50 },
+                { name: '湿度(%RH)', type: 'value', min: 0, max: 100, offset: 60 }
+            ],
+            series: [
+                { name: '温度(℃)', type: 'line', yAxisIndex: 0, data: [], smooth: true, lineStyle: { width: 3 } },
+                { name: '湿度(%RH)', type: 'line', yAxisIndex: 1, data: [], smooth: true, lineStyle: { width: 3 } }
+            ]
+        };
+        myChart.setOption(chartOption);
+
+        function updateRealtime() {
+            // 获取实时数据
+            fetch('/api/realtime')
+                .then(res => res.json())
+                .then(res => {
+                    if (res.code !== 200) return;
+
+                    const nodes = res.data;
+                    let html = '';
+
+                    Object.keys(nodes).forEach(node => {
+                        const d = nodes[node];
+                        const isAlert = d.temp < 15 || d.temp > 30 || d.hum < 40 || d.hum > 80; // 示例阈值，可自行调整
+                        html += `
+                            <div class="col-md-4">
+                                <div class="card h-100 ${isAlert ? 'alert' : ''}">
+                                    <div class="card-body">
+                                        <h5 class="card-title">${node} <span class="badge bg-${isAlert ? 'danger' : 'success'}">${isAlert ? '异常' : '正常'}</span></h5>
+                                        <p class="mb-1">温度：<strong>${d.temp} ℃</strong></p>
+                                        <p class="mb-1">湿度：<strong>${d.hum} %RH</strong></p>
+                                        <small class="text-muted">更新时间：${d.collect_time}</small>
+                                    </div>
+                                </div>
+                            </div>`;
+                    });
+                    document.getElementById('nodeCards').innerHTML = html;
+                });
+
+            // 更新曲线
+            fetch('/api/realtime')
+                .then(res => res.json())
+                .then(res => {
+                    if (res.code !== 200) return;
+                    const nodeData = res.data.Node1 || Object.values(res.data)[0];
+                    if (!nodeData) return;
+
+                    const now = new Date().getTime();
+                    const series = myChart.getOption().series;
+
+                    series[0].data.push([now, parseFloat(nodeData.temp)]);
+                    series[1].data.push([now, parseFloat(nodeData.hum)]);
+
+                    if (series[0].data.length > 60) {
+                        series[0].data.shift();
+                        series[1].data.shift();
+                    }
+
+                    myChart.setOption({ series: series });
+                });
+
+            // 预警状态
+            fetch('/api/alert')
+                .then(res => res.json())
+                .then(res => {
+                    if (res.code === 200) {
+                        const alerts = Object.values(res.data).filter(a => a.status === 'alert');
+                        const box = document.getElementById('alertBox');
+                        if (alerts.length > 0) {
+                            box.style.display = 'block';
+                            box.innerHTML = `<strong>⚠️ 当前预警：</strong> ${alerts.map(a => a.msg).join('；')}`;
+                        } else {
+                            box.style.display = 'none';
+                        }
+                    }
+                });
+        }
+
+        // 立即刷新 + 每3秒刷新
+        updateRealtime();
+        setInterval(updateRealtime, 3000);
+
+        // 自适应图表
+        window.addEventListener('resize', () => myChart.resize());
+    </script>
+
+    <footer class="text-center py-3 mt-5 text-muted">
+        © 2026 王健 大连东软信息学院 | GitHub: 20247140130
+    </footer>
 </body>
 </html>

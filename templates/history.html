@@ -3,35 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>历史数据 - 蔬菜大棚土壤墒情监测平台</title>
+    <title>歷史數據 - 蔬菜大棚土壤墒情監測平台</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <style>
         body { background: #f8f9fa; }
         .table th { background: #198754; color: white; }
+        .loading-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.8);
+            display: none; justify-content: center; align-items: center;
+            z-index: 10;
+        }
+        .spinner-border { width: 3rem; height: 3rem; }
     </style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-success">
         <div class="container">
-            <a class="navbar-brand fw-bold" href="/">🌱 蔬菜大棚土壤墒情监测平台</a>
+            <a class="navbar-brand fw-bold" href="/">🌱 蔬菜大棚土壤墒情監測平台</a>
             <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="/">实时监控</a>
-                <a class="nav-link active" href="/history">历史数据</a>
-                <a class="nav-link" href="/threshold">阈值设置</a>
+                <a class="nav-link" href="/">實時監控</a>
+                <a class="nav-link active" href="/history">歷史數據</a>
+                <a class="nav-link" href="/threshold">閾值設置</a>
             </div>
         </div>
     </nav>
 
     <div class="container mt-4">
-        <h2 class="text-center mb-4">土壤墒情历史数据查询</h2>
+        <h2 class="text-center mb-4">土壤墒情歷史數據查詢</h2>
 
-        <!-- 查询表单 -->
         <div class="card mb-4">
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-3">
-                        <label class="form-label">监测节点</label>
+                        <label class="form-label">監測節點</label>
                         <select id="nodeSelect" class="form-select">
                             <option value="Node1">Node1</option>
                             <option value="Node2">Node2</option>
@@ -39,47 +45,66 @@
                         </select>
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label">开始时间</label>
+                        <label class="form-label">開始時間</label>
                         <input type="datetime-local" id="startTime" class="form-control">
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label">结束时间</label>
+                        <label class="form-label">結束時間</label>
                         <input type="datetime-local" id="endTime" class="form-control">
                     </div>
                     <div class="col-md-1 d-flex align-items-end">
-                        <button onclick="queryHistory()" class="btn btn-success w-100">查询</button>
+                        <!-- 🔥 增加 ID 以便控制狀態 -->
+                        <button id="queryBtn" onclick="queryHistory()" class="btn btn-success w-100">查詢</button>
                     </div>
                 </div>
+                <!-- 狀態提示 -->
+                <div id="statusMsg" class="mt-2 text-center small"></div>
             </div>
         </div>
 
-        <!-- 历史曲线 -->
-        <div class="card mb-4">
+        <div class="card mb-4 position-relative">
+            <!-- 🔥 加載遮罩 -->
+            <div id="chartLoading" class="loading-overlay">
+                <div class="text-center">
+                    <div class="spinner-border text-success"></div>
+                    <div class="mt-2 text-muted">正在繪製曲線...</div>
+                </div>
+            </div>
+            
             <div class="card-header bg-white">
-                <h5 class="mb-0">历史温湿度变化曲线</h5>
+                <h5 class="mb-0">歷史溫溼度變化曲線</h5>
             </div>
             <div class="card-body">
                 <div id="historyChart" style="width:100%; height:500px;"></div>
             </div>
         </div>
 
-        <!-- 数据表格 + 导出 -->
-        <div class="card">
+        <div class="card position-relative">
+            <!-- 🔥 加載遮罩 -->
+            <div id="tableLoading" class="loading-overlay">
+                <div class="text-center">
+                    <div class="spinner-border text-success"></div>
+                    <div class="mt-2 text-muted">正在加載數據...</div>
+                </div>
+            </div>
+
             <div class="card-header d-flex justify-content-between">
-                <h5 class="mb-0">历史数据明细</h5>
-                <button onclick="exportToCSV()" class="btn btn-outline-success btn-sm">📥 导出 Excel (CSV)</button>
+                <h5 class="mb-0">歷史數據明細</h5>
+                <button onclick="exportToCSV()" class="btn btn-outline-success btn-sm" id="exportBtn" disabled>📥 導出 CSV</button>
             </div>
             <div class="card-body p-0">
                 <table class="table table-hover mb-0" id="historyTable">
                     <thead>
                         <tr>
-                            <th>采集时间</th>
-                            <th>节点</th>
-                            <th>温度 (℃)</th>
-                            <th>湿度 (%RH)</th>
+                            <th>採集時間</th>
+                            <th>節點</th>
+                            <th>溫度 (℃)</th>
+                            <th>溼度 (%RH)</th>
                         </tr>
                     </thead>
-                    <tbody></tbody>
+                    <tbody>
+                        <tr><td colspan="4" class="text-center text-muted py-4">請點擊查詢按鈕加載數據</td></tr>
+                    </tbody>
                 </table>
             </div>
         </div>
@@ -87,90 +112,276 @@
 
     <script>
         let historyChart = echarts.init(document.getElementById('historyChart'));
+        let isQuerying = false; // 🔥 防止重複點擊標誌
 
-        function queryHistory() {
-            const node = document.getElementById('nodeSelect').value;
-            const start = document.getElementById('startTime').value;
-            const end = document.getElementById('endTime').value;
+        function parseTime(timeStr) {
+            if (!timeStr) return null;
+            try {
+                let year, month, day, hour, min, sec;
+                if (timeStr.includes('GMT')) {
+                    const match = timeStr.match(/(\d{1,2})\s+(\w{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
+                    if (match) {
+                        [, day, month, year, hour, min, sec] = match;
+                        const months = {Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12};
+                        month = months[month];
+                    }
+                } else if (timeStr.match(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/)) {
+                    const match = timeStr.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+                    [, year, month, day, hour, min, sec] = match;
+                }
+                if (!year) return null;
+                return new Date(year, month-1, day, hour, min, sec);
+            } catch (e) {
+                return null;
+            }
+        }
 
-            if (!start || !end) {
-                alert("请选择开始和结束时间！");
+        function formatLocalDate(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+
+        function initChart() {
+            historyChart.setOption({
+				title: { 
+						text: '歷史墒情曲線', 
+						left: 'center',
+						top: 10,
+						textStyle: {
+							fontSize: 16,           // 稍大一點的字號
+							fontWeight: 'bold',
+							color: '#333'           // 深色文字
+						},
+						subtextStyle: {
+							fontSize: 12,
+							color: '#666'
+						}
+					},
+                tooltip: { 
+                    trigger: 'axis',
+                    formatter: function(params) {
+                        if (!params || !params[0]) return '';
+                        const timeVal = params[0].value[0];
+                        const date = new Date(timeVal);
+                        const timeStr = date.toLocaleString('zh-CN', { 
+                            year: 'numeric', month: '2-digit', day: '2-digit',
+                            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+                        });
+                        let result = `<div><strong>${timeStr}</strong></div>`;
+                        params.forEach(p => {
+                            result += `<div>${p.marker} ${p.seriesName}: ${p.value[1]}</div>`;
+                        });
+                        return result;
+                    }
+                },
+                legend: { data: ['溫度(℃)', '溼度(%RH)'], top: 40 },
+                grid: { left: 60, right: 80, top: 75, bottom: 50,containLabel: true },
+                xAxis: { 
+                    type: 'time', boundaryGap: false,
+                    axisLabel: {
+                        formatter: function(value) {
+                            const date = new Date(value);
+                            return date.toLocaleString('zh-CN', { 
+                                month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+                            });
+                        }
+                    }
+                },
+                yAxis: [
+                    { name: '溫度(℃)', type: 'value', min: 0, max: 50, position: 'left' },
+                    { name: '溼度(%RH)', type: 'value', min: 0, max: 100, position: 'right' }
+                ],
+                series: [
+                    { name: '溫度(℃)', type: 'line', data: [], smooth: true, yAxisIndex: 0 },
+                    { name: '溼度(%RH)', type: 'line', data: [], smooth: true, yAxisIndex: 1 }
+                ]
+            });
+        }
+
+        initChart();
+
+        async function queryHistory(auto = false) {
+            if (isQuerying) {
+                console.log('⚠️ 查詢進行中，請稍候...');
                 return;
             }
 
-            fetch(`/api/history?node_id=${node}&start_time=${start}&end_time=${end}`)
-                .then(res => res.json())
-                .then(res => {
-                    if (res.code !== 200) return;
+            const btn = document.getElementById('queryBtn');
+            const statusMsg = document.getElementById('statusMsg');
+            const chartLoading = document.getElementById('chartLoading');
+            const tableLoading = document.getElementById('tableLoading');
+            const exportBtn = document.getElementById('exportBtn');
 
-                    // 更新表格
-                    let tbody = document.querySelector('#historyTable tbody');
-                    tbody.innerHTML = '';
-                    res.data.forEach(item => {
-                        let tr = `<tr>
-                            <td>${item.collect_time}</td>
-                            <td>${node}</td>
-                            <td>${item.temp}</td>
-                            <td>${item.hum}</td>
-                        </tr>`;
-                        tbody.innerHTML += tr;
-                    });
+            // 🔥 鎖定狀態
+            isQuerying = true;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 查詢中...';
+            statusMsg.className = 'mt-2 text-center small text-muted';
+            statusMsg.innerText = '';
+            exportBtn.disabled = true;
+            
+            // 顯示加載動畫
+            chartLoading.style.display = 'flex';
+            tableLoading.style.display = 'flex';
 
-                    // 更新图表
-                    let tempData = [], humData = [];
-                    res.data.forEach(item => {
-                        let ts = new Date(item.collect_time).getTime();
-                        tempData.push([ts, item.temp]);
-                        humData.push([ts, item.hum]);
-                    });
+            const node = document.getElementById('nodeSelect').value;
+            let start = document.getElementById('startTime').value;
+            let end = document.getElementById('endTime').value;
 
-                    historyChart.setOption({
-                        title: { text: `${node} 历史墒情曲线`, left: 'center' },
-                        tooltip: { trigger: 'axis' },
-                        legend: { data: ['温度(℃)', '湿度(%RH)'], top: 20 },
-                        xAxis: { type: 'time' },
-                        yAxis: [
-                            { name: '温度(℃)', type: 'value', min: 0, max: 50 },
-                            { name: '湿度(%RH)', type: 'value', min: 0, max: 100, offset: 60 }
-                        ],
-                        series: [
-                            { name: '温度(℃)', type: 'line', data: tempData, smooth: true },
-                            { name: '湿度(%RH)', type: 'line', data: humData, smooth: true }
-                        ]
-                    });
+            if (auto || !start || !end) {
+                const now = new Date();
+                const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+                start = formatLocalDate(yesterday);
+                end = formatLocalDate(now);
+                document.getElementById('startTime').value = start;
+                document.getElementById('endTime').value = end;
+            }
+
+            console.log('📊 查詢:', { node, start, end });
+
+            try {
+                // 🔥 關鍵：添加 10 秒超時控制
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+                const res = await fetch(`/api/history?node_id=${node}&start_time=${start}&end_time=${end}`, {
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
+
+                if (!res.ok) {
+                    if (res.status === 503) {
+                        throw new Error('數據庫繁忙，請稍後再試 (503)');
+                    }
+                    throw new Error(`HTTP ${res.status}`);
+                }
+
+                const result = await res.json();
+                console.log('📥 API 返回:', result);
+
+                if (result.code !== 200) {
+                    throw new Error(result.msg || '查詢失敗');
+                }
+
+                const data = result.data || [];
+                statusMsg.innerText = `查詢完成，共找到 ${data.length} 筆記錄`;
+                statusMsg.classList.add('text-success');
+
+                // 更新表格
+                const tbody = document.querySelector('#historyTable tbody');
+                tbody.innerHTML = '';
+                if (data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">該時間段內暫無數據</td></tr>';
+                } else {
+                    data.forEach(item => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `<td>${item.collect_time}</td><td>${node}</td><td>${item.temp}</td><td>${item.hum}</td>`;
+                        tbody.appendChild(tr);
+                    });
+                    exportBtn.disabled = false; // 啟用導出
+                }
+
+                // 準備圖表數據
+                if (data.length > 0) {
+                    const tempData = [];
+                    const humData = [];
+                    let successCount = 0;
+
+                    data.forEach((item) => {
+                        const dateObj = parseTime(item.collect_time);
+                        if (dateObj && !isNaN(dateObj.getTime())) {
+                            const timestamp = dateObj.getTime();
+                            tempData.push([timestamp, Number(item.temp) || 0]);
+                            humData.push([timestamp, Number(item.hum) || 0]);
+                            successCount++;
+                        }
+                    });
+
+                    if (tempData.length > 0) {
+                        historyChart.setOption({
+                            title: { text: `${node} 歷史墒情曲線 (${tempData.length} 筆)` },
+                            series: [{ data: tempData }, { data: humData }]
+                        }, false);
+                    } else {
+                        historyChart.setOption({ title: { text: '時間格式解析失敗，無法繪圖' }, series: [{data:[]}, {data:[]}] });
+                    }
+                } else {
+                    historyChart.setOption({ title: { text: '暫無數據可繪圖' }, series: [{data:[]}, {data:[]}] });
+                }
+
+            } catch (err) {
+                console.error('❌ 錯誤:', err);
+                let msg = err.message;
+                if (err.name === 'AbortError') {
+                    msg = '查詢超時 (超過 10 秒)，可能是數據量過大或網絡擁堵，請縮小時間範圍重試。';
+                    statusMsg.className = 'mt-2 text-center small text-danger fw-bold';
+                } else if (msg.includes('503')) {
+                    statusMsg.className = 'mt-2 text-center small text-danger fw-bold';
+                } else {
+                    statusMsg.className = 'mt-2 text-center small text-danger';
+                }
+                statusMsg.innerText = '錯誤：' + msg;
+                
+                // 清空舊數據避免誤導
+                document.querySelector('#historyTable tbody').innerHTML = '<tr><td colspan="4" class="text-center text-danger py-4">加載失敗</td></tr>';
+                historyChart.setOption({ title: { text: '加載失敗' }, series: [{data:[]}, {data:[]}] });
+            } finally {
+                // 🔥 解鎖狀態
+                isQuerying = false;
+                btn.disabled = false;
+                btn.innerHTML = '查詢';
+                chartLoading.style.display = 'none';
+                tableLoading.style.display = 'none';
+            }
         }
 
         function exportToCSV() {
-            let rows = document.querySelectorAll('#historyTable tr');
-            let csv = "采集时间,节点,温度(℃),湿度(%RH)\n";
+            const rows = document.querySelectorAll('#historyTable tbody tr');
+            if (rows.length === 0 || rows[0].querySelector('td[colspan]')) {
+                alert('暫無數據可導出');
+                return;
+            }
+            let csv = "\uFEFF採集時間，節點，溫度 (℃),溼度 (%RH)\n";
             rows.forEach(row => {
-                let cells = row.querySelectorAll('td');
+                const cells = row.querySelectorAll('td');
                 if (cells.length) {
-                    csv += Array.from(cells).map(cell => cell.textContent).join(',') + '\n';
+                    csv += Array.from(cells).map(cell => {
+                        let text = cell.textContent.trim();
+                        if (text.includes(',') || text.includes('\n')) {
+                            text = `"${text.replace(/"/g, '""')}"`;
+                        }
+                        return text;
+                    }).join(',') + '\n';
                 }
             });
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = `土壤墒情历史数据_${new Date().toISOString().slice(0,10)}.csv`;
+            link.download = `土壤墒情歷史_${new Date().toISOString().slice(0,10)}.csv`;
+            document.body.appendChild(link);
             link.click();
+            document.body.removeChild(link);
         }
 
-        // 默认显示最近24小时 Node1
         window.onload = () => {
             const now = new Date();
-            const start = new Date(now.getTime() - 24*60*60*1000);
-            document.getElementById('startTime').value = start.toISOString().slice(0,16);
-            document.getElementById('endTime').value = now.toISOString().slice(0,16);
-            queryHistory();
+            const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            document.getElementById('startTime').value = formatLocalDate(yesterday);
+            document.getElementById('endTime').value = formatLocalDate(now);
+            console.log('🌱 頁面已加載，自動查詢...');
+            // 自動查詢時也使用異步函數
+            queryHistory(true);
         };
 
         window.addEventListener('resize', () => historyChart.resize());
     </script>
 
     <footer class="text-center py-3 mt-5 text-muted">
-        © 2026 王健 大连东软信息学院 | GitHub: 20247140130
+        © 2026 王健 大連東軟信息學院 | GitHub: 20247140130
     </footer>
 </body>
 </html>

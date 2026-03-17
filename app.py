@@ -147,24 +147,24 @@ def on_message(client, userdata, msg):
 
         temp = 0.0
         try:
-            temp = float(payload.get('temp', 0.0))
+            temp = float(payload.get('temp', payload.get('temperature', 0.0)))
         except (ValueError, TypeError) as e:
-            logger.warning(f"temp 轉換失敗，使用 0.0: {payload.get('temp')} → {e}")
+            logger.warning(f"temp 转换失败: {payload.get('temp')} → {e}")
 
         hum = 0.0
         try:
-            hum = float(payload.get('hum', 0.0))
+            hum = float(payload.get('hum', payload.get('humidity', 0.0)))
         except (ValueError, TypeError) as e:
-            logger.warning(f"hum 轉換失敗，使用 0.0: {payload.get('hum')} → {e}")
+            logger.warning(f"hum 转换失败: {payload.get('hum')} → {e}")
 
         collect_time = payload.get('time')
         use_server_time = False
         if not collect_time or collect_time.strip() == '' or collect_time == 'Time sync failed':
             collect_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             use_server_time = True
-            logger.info(f"【時間同步失敗，使用伺服器時間】: {collect_time}")
+            logger.info(f"【时间同步失败，使用服务器时间】: {collect_time}")
 
-        # 存 Redis（兼容 Redis 3.0，逐個 hset）
+        # ====================== 1. 保存到 Redis ======================
         redis_key = f"soil_data:{node_id}"
         try:
             redis_db.hset(redis_key, "temp", str(temp))
@@ -175,46 +175,87 @@ def on_message(client, userdata, msg):
             redis_db.expire(redis_key, 86400 * 7)
             logger.info(f"✅ Redis 更新成功: {redis_key}")
         except redis.RedisError as re:
-            logger.error(f"❌ Redis 寫入失敗: {re}")
+            logger.error(f"❌ Redis 写入失败: {re}")
 
-        # 存 MySQL（關鍵修復：先判斷 mysql_conn 是否為 None）
+        # ====================== 2. 保存到 MySQL + 报警判断 ======================
         mysql_conn = get_mysql_connection(max_retries=2)
         if mysql_conn is not None and mysql_conn.is_connected():
             try:
                 cursor = mysql_conn.cursor()
+
+                # 2.1 插入传感器数据
                 sql = """
                     INSERT INTO soil_data (node_id, temp, hum, collect_time)
                     VALUES (%s, %s, %s, %s)
                 """
                 cursor.execute(sql, (node_id, temp, hum, collect_time))
+
+                # 2.2 检查并记录报警（核心新增功能）
+                cursor.execute("""
+                    SELECT temp_min, temp_max, hum_min, hum_max 
+                    FROM thresholds WHERE node_id = %s
+                """, (node_id,))
+                threshold = cursor.fetchone()
+
+                if threshold:
+                    t_min, t_max, h_min, h_max = threshold
+                    alert_type = None
+                    actual_value = None
+                    threshold_range = None
+
+                    if temp > t_max:
+                        alert_type = "温度过高"
+                        actual_value = temp
+                        threshold_range = f"> {t_max}℃"
+                    elif temp < t_min:
+                        alert_type = "温度过低"
+                        actual_value = temp
+                        threshold_range = f"< {t_min}℃"
+
+                    if hum > h_max:
+                        alert_type = (alert_type + " & 湿度过高") if alert_type else "湿度过高"
+                        actual_value = hum
+                        threshold_range = f"> {h_max}%RH"
+                    elif hum < h_min:
+                        alert_type = (alert_type + " & 湿度过低") if alert_type else "湿度过低"
+                        actual_value = hum
+                        threshold_range = f"< {h_min}%RH"
+
+                    if alert_type:
+                        cursor.execute("""
+                            INSERT INTO alerts_log 
+                            (node_id, alert_type, actual_value, threshold_range, status)
+                            VALUES (%s, %s, %s, %s, '未处理')
+                        """, (node_id, alert_type, actual_value, threshold_range))
+                        logger.warning(f"🚨 报警已记录 → {node_id} | {alert_type} | 值={actual_value}")
+
                 mysql_conn.commit()
-                logger.info(f"✅ 【MySQL 寫入成功】 Node {node_id} | temp={temp} | hum={hum} | time={collect_time}")
+                logger.info(f"✅ 【MySQL 写入成功】 Node {node_id} | temp={temp:.2f} | hum={hum:.2f}")
+
             except MySQLError as db_err:
-                logger.error(f"❌ MySQL 寫入失敗: {db_err}", exc_info=True)
-                try:
+                logger.error(f"❌ MySQL 操作失败: {db_err}", exc_info=True)
+                if mysql_conn:
                     mysql_conn.rollback()
-                except Exception as rollback_err:
-                    logger.warning(f"Rollback 失敗: {rollback_err}")
             finally:
                 if cursor:
                     try:
                         cursor.close()
                     except Exception as e:
-                        logger.warning(f"關閉 cursor 失敗: {e}")
+                        logger.warning(f"关闭 cursor 失败: {e}")
         else:
-            logger.warning("⚠️ MySQL 未連接或連接無效，跳過寫入（Redis 已保存）")
+            logger.warning("⚠️ MySQL 连接无效，仅保存到 Redis")
 
     except json.JSONDecodeError as je:
-        logger.error(f"❌ JSON 解析失敗: {msg.payload} | 錯誤: {je}")
+        logger.error(f"❌ JSON 解析失败: {msg.payload} | 错误: {je}")
     except Exception as e:
-        logger.error(f"❌ 處理 MQTT 消息異常: {type(e).__name__} - {str(e)}")
+        logger.error(f"❌ 处理 MQTT 消息异常: {type(e).__name__} - {str(e)}")
         logger.error(traceback.format_exc())
     finally:
         if mysql_conn is not None and mysql_conn.is_connected():
             try:
                 mysql_conn.close()
             except Exception as e:
-                logger.warning(f"關閉連接失敗: {e}")
+                logger.warning(f"关闭 MySQL 连接失败: {e}")
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
@@ -292,6 +333,172 @@ def time_verify():
 @app.route('/api-raw-check')
 def api_raw_check():
     return render_template('api_raw_check.html')
+    
+@app.route('/alerts')
+def alerts():
+    return render_template('alerts.html')
+
+@app.route('/reports')
+def reports():
+    return render_template('reports.html')
+
+@app.route('/analysis')
+def analysis():
+    return render_template('analysis.html')
+
+@app.route('/api/analysis')
+def api_analysis():
+    conn = get_mysql_connection()
+    if not conn:
+        return jsonify({"error": "数据库连接失败"}), 500
+    
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        # 总记录数
+        cursor.execute("SELECT COUNT(*) as total FROM soil_data")
+        total_records = cursor.fetchone()['total']
+
+        # 平均温湿度
+        cursor.execute("SELECT AVG(temp) as avg_temp, AVG(hum) as avg_hum FROM soil_data")
+        avg = cursor.fetchone()
+
+        # 报警总数
+        cursor.execute("SELECT COUNT(*) as total_alerts FROM alerts_log")
+        total_alerts = cursor.fetchone()['total_alerts']
+
+        # 各节点平均值
+        cursor.execute("""
+            SELECT node_id, AVG(temp) as avg_temp, AVG(hum) as avg_hum 
+            FROM soil_data GROUP BY node_id
+        """)
+        nodes_data = cursor.fetchall()
+
+        nodes = [row['node_id'] for row in nodes_data]
+        avg_temps = [round(row['avg_temp'], 2) for row in nodes_data]
+        avg_hums = [round(row['avg_hum'], 2) for row in nodes_data]
+
+        return jsonify({
+            "total_records": total_records,
+            "total_alerts": total_alerts,
+            "avg_temp": round(avg['avg_temp'], 2) if avg['avg_temp'] else 0,
+            "avg_hum": round(avg['avg_hum'], 2) if avg['avg_hum'] else 0,
+            "nodes": nodes,
+            "avg_temps": avg_temps,
+            "avg_hums": avg_hums,
+            "dates": ["03-01", "03-05", "03-10", "03-15", "03-20", "03-25", "03-30"],  # 可后续完善
+            "alert_counts": [3, 5, 2, 8, 4, 6, 3],
+            "hum_bins": ["0-20", "20-40", "40-60", "60-80", "80-100"],
+            "hum_counts": [12, 45, 128, 89, 23]
+        })
+    finally:
+        cursor.close()
+        conn.close()
+        
+@app.route('/devices')
+def devices():
+    return render_template('devices.html')
+
+# API 接口（前端 fetch 使用）
+@app.route('/api/alerts')
+def api_alerts():
+    conn = get_mysql_connection()
+    if not conn:
+        return jsonify([]), 500
+    
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # 修正：数据库字段是 timestamp, node_id, alert_type, actual_value, threshold_range, status
+        sql = """
+            SELECT id, timestamp, node_id, alert_type, actual_value, threshold_range, status 
+            FROM alerts_log 
+            ORDER BY timestamp DESC 
+            LIMIT 100
+        """
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+        
+        # 格式化数据，确保前端能直接用（可选，但推荐）
+        # 将 datetime 对象转换为字符串
+        for row in rows:
+            if row['timestamp']:
+                row['timestamp'] = row['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+            # 确保数值类型正确
+            if row['actual_value'] is not None:
+                row['actual_value'] = float(row['actual_value'])
+                
+        return jsonify(rows)
+    except Exception as e:
+        logger.error(f"获取报警日志失败: {e}")
+        return jsonify([]), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.route('/api/alerts/<int:alert_id>/handle', methods=['POST'])
+def handle_alert(alert_id):
+    conn = get_mysql_connection()
+    if not conn:
+        return jsonify({'code': 500, 'msg': 'DB Connection Failed'}), 500
+    
+    cursor = conn.cursor()
+    try:
+        sql = "UPDATE alerts_log SET status = '已处理' WHERE id = %s"
+        cursor.execute(sql, (alert_id,))
+        conn.commit()
+        if cursor.rowcount > 0:
+            return jsonify({'code': 200, 'msg': 'Success'})
+        else:
+            return jsonify({'code': 404, 'msg': 'Alert not found'}), 404
+    except Exception as e:
+        logger.error(f"更新报警状态失败: {e}")
+        return jsonify({'code': 500, 'msg': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.route('/api/alerts/clear', methods=['POST'])
+def clear_alerts():
+    conn = get_mysql_connection()
+    if not conn:
+        return jsonify({'code': 500, 'msg': 'DB Connection Failed'}), 500
+    
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM alerts_log")
+        conn.commit()
+        logger.info("已清空所有报警日志")
+        return jsonify({'code': 200, 'msg': 'Cleared'})
+    except Exception as e:
+        logger.error(f"清空报警日志失败: {e}")
+        return jsonify({'code': 500, 'msg': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.route('/api/reports')
+def api_reports():
+    # 计算平均值、报警次数等统计
+    return jsonify({
+        'avg_temp': 23.5,
+        'avg_hum': 65.2,
+        'alert_count': 12,
+        # 可扩展更多
+    })
+
+@app.route('/api/devices')
+def api_devices():
+    # 从 Redis 或数据库获取各节点最新状态
+    return jsonify([
+        {'node_id': 'Node1', 'status': 'online', 'temp': 24.5, 'hum': 68, 'last_time': '刚刚', 'battery': '92'},
+        {'node_id': 'Node2', 'status': 'online', 'temp': 22.1, 'hum': 71, 'last_time': '1分钟前', 'battery': '85'},
+        # ...
+    ])
+
+@app.route('/api/export_report')
+def export_report():
+    # 返回 CSV 文件下载
+    return "CSV 下载功能（可后续扩展）"    
 
 @app.route('/api/realtime', methods=['GET'])
 def get_realtime_data():
@@ -308,6 +515,10 @@ def get_realtime_data():
         logger.error(f"❌ realtime API 錯誤: {e}")
         return jsonify({"code": 500, "msg": str(e), "data": None}), 500
 
+@app.route('/weather')
+def weather():
+    return render_template('weather.html')
+    
 @app.route('/api/history', methods=['GET'])
 def get_history_data():
     mysql_conn = None

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大数据分析 - 蔬菜大棚土壤墒情监测平台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body { background: #f8f9fa; }
+        .stat-card { text-align: center; padding: 20px; }
+    </style>
+</head>
+<body>
+    <!-- 统一导航栏 -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-success shadow-sm">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">🌱 蔬菜大棚土壤墒情监测平台</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/">实时监控</a>
+                <a class="nav-link" href="/history">历史数据</a>
+                <a class="nav-link" href="/alerts">报警日志</a>
+                <a class="nav-link" href="/analysis">大数据分析</a>
+                <a class="nav-link" href="/reports">数据报告</a>
+                <a class="nav-link active" href="/weather">天气查询</a>
+                <a class="nav-link" href="/threshold">阈值设置</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container mt-4">
+        <h2 class="text-center mb-4">📈 大数据分析中心</h2>
+
+        <!-- 统计卡片 -->
+        <div class="row g-3 mb-4" id="statCards">
+            <!-- JS 动态生成 -->
+        </div>
+
+        <div class="row">
+            <!-- 多节点温度湿度对比 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">各节点平均温湿度对比（最近30天）</div>
+                    <div class="card-body">
+                        <div id="compareChart" style="height: 380px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 报警趋势 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">最近30天报警趋势</div>
+                    <div class="card-body">
+                        <div id="alertTrendChart" style="height: 380px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 土壤湿度分布 -->
+        <div class="card mb-4">
+            <div class="card-header">土壤湿度分布直方图（全站数据）</div>
+            <div class="card-body">
+                <div id="humHistogram" style="height: 400px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let compareChart = echarts.init(document.getElementById('compareChart'));
+        let alertTrendChart = echarts.init(document.getElementById('alertTrendChart'));
+        let humHistogram = echarts.init(document.getElementById('humHistogram'));
+
+        function loadAnalysis() {
+            fetch('/api/analysis')
+                .then(res => res.json())
+                .then(data => {
+                    // 统计卡片
+                    document.getElementById('statCards').innerHTML = `
+                        <div class="col-md-3">
+                            <div class="card stat-card bg-primary text-white">
+                                <h4>${data.total_records || 0}</h4>
+                                <p>总采集记录</p>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card stat-card bg-danger text-white">
+                                <h4>${data.total_alerts || 0}</h4>
+                                <p>报警次数</p>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card stat-card bg-success text-white">
+                                <h4>${data.avg_temp ? data.avg_temp.toFixed(1) : 0}℃</h4>
+                                <p>平均温度</p>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card stat-card bg-info text-white">
+                                <h4>${data.avg_hum ? data.avg_hum.toFixed(1) : 0}%</h4>
+                                <p>平均湿度</p>
+                            </div>
+                        </div>
+                    `;
+
+                    // 节点对比柱状图
+                    compareChart.setOption({
+                        title: { text: '各节点平均值对比', left: 'center' },
+                        tooltip: { trigger: 'axis' },
+                        legend: { data: ['平均温度(℃)', '平均湿度(%)'] },
+                        xAxis: { type: 'category', data: data.nodes || [] },
+                        yAxis: [{ type: 'value', name: '温度(℃)' }, { type: 'value', name: '湿度(%)', position: 'right' }],
+                        series: [
+                            { name: '平均温度(℃)', type: 'bar', data: data.avg_temps || [], itemStyle: { color: '#ff6b6b' } },
+                            { name: '平均湿度(%)', type: 'bar', data: data.avg_hums || [], yAxisIndex: 1, itemStyle: { color: '#4ecdc4' } }
+                        ]
+                    });
+
+                    // 报警趋势
+                    alertTrendChart.setOption({
+                        title: { text: '报警次数趋势', left: 'center' },
+                        xAxis: { type: 'category', data: data.dates || [] },
+                        yAxis: { type: 'value' },
+                        series: [{ type: 'line', data: data.alert_counts || [], smooth: true, color: '#dc3545' }]
+                    });
+
+                    // 湿度分布直方图
+                    humHistogram.setOption({
+                        title: { text: '土壤湿度分布', left: 'center' },
+                        tooltip: { trigger: 'axis' },
+                        xAxis: { type: 'category', data: data.hum_bins || [] },
+                        yAxis: { type: 'value' },
+                        series: [{ type: 'bar', data: data.hum_counts || [], color: '#45b7d1' }]
+                    });
+                })
+                .catch(err => console.error('分析数据加载失败', err));
+        }
+
+        window.onload = loadAnalysis;
+        setInterval(loadAnalysis, 60000); // 每分钟自动刷新
+    </script>
+</body>
+</html>

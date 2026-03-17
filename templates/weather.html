@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>天气查询 - 蔬菜大棚土壤墒情监测平台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        body { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); min-height: 100vh; }
+        .weather-card { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; border: none; box-shadow: 0 10px 40px rgba(56, 239, 125, 0.3); }
+        .forecast-day { text-align: center; transition: transform 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .forecast-day:hover { transform: translateY(-5px); }
+        .weather-icon { font-size: 4.5rem; text-shadow: 2px 2px 4px rgba(0,0,0,0.2); }
+        .detail-item { background: rgba(255,255,255,0.2); border-radius: 10px; padding: 12px; margin: 8px 0; backdrop-filter: blur(5px); }
+        .index-card { border-left: 4px solid; transition: all 0.3s; }
+        .index-card:hover { background: #f8f9fa; transform: translateX(5px); }
+        .loading-spinner { width: 3rem; height: 3rem; border: 0.25rem solid rgba(255,255,255,0.3); border-top-color: white; }
+        .soil-temp-badge { background: #8d6e63; color: white; padding: 5px 10px; border-radius: 20px; font-weight: bold; }
+        .suggestion-item { cursor: pointer; padding: 10px 15px; border-bottom: 1px solid #eee; }
+        .suggestion-item:hover { background: #e3f2fd; }
+        .dropdown-menu { max-height: 300px; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.15); border: none; z-index: 1050; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-success shadow-sm">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">🌱 蔬菜大棚土壤墒情监测平台</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/">实时监控</a>
+                <a class="nav-link" href="/history">历史数据</a>
+                <a class="nav-link" href="/alerts">报警日志</a>
+                <a class="nav-link" href="/analysis">大数据分析</a>
+                <a class="nav-link" href="/reports">数据报告</a>
+                <a class="nav-link active" href="/weather">天气查询</a>
+                <a class="nav-link" href="/threshold">阈值设置</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container mt-4 mb-5">
+        <h2 class="text-center mb-4 fw-bold">
+            <i class="bi bi-cloud-sun"></i> 大棚辅助天气系统
+        </h2>
+        <p class="text-center text-muted mb-4">
+            数据源：<strong>OpenMeteo</strong> | 含土壤温度预测
+        </p>
+
+        <!-- 城市搜索区域 -->
+        <div class="row justify-content-center mb-4">
+            <div class="col-md-6 position-relative">
+                <label class="form-label fw-bold text-success"><i class="bi bi-geo-alt"></i> 选择大棚所在地</label>
+                <div class="input-group input-group-lg">
+                    <input type="text" id="cityInput" class="form-control" placeholder="输入城市名 (如：大连、北京)" value="大连" autocomplete="off">
+                    <button class="btn btn-success px-4" onclick="searchAndLoad()">
+                        <i class="bi bi-search"></i> 查询
+                    </button>
+                </div>
+                <!-- 自动补全下拉列表 -->
+                <ul id="suggestions" class="dropdown-menu w-100 list-unstyled" style="display:none;"></ul>
+                
+                <div class="form-text mt-2">
+                    <i class="bi bi-info-circle"></i> 默认显示 <strong>大连</strong>。输入城市名后按回车或点击查询即可。
+                </div>
+            </div>
+        </div>
+
+        <div id="weatherResult" class="row g-4"></div>
+        <div id="statusMessage" class="text-center mt-3"></div>
+        
+        <!-- 农业建议区域 -->
+        <div id="agricultureAdvice" class="row mt-4" style="display:none;">
+            <div class="col-12">
+                <div class="card border-warning">
+                    <div class="card-header bg-warning text-dark fw-bold">
+                        <i class="bi bi-lightbulb"></i> 大棚种植建议
+                    </div>
+                    <div class="card-body" id="adviceContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 默认坐标：大连
+        let currentLat = 38.9140;
+        let currentLon = 121.6147;
+        let currentCityName = "大连";
+        
+        const API_URL = 'https://api.open-meteo.com/v1/forecast';
+        const GEO_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+
+        // WMO 天气代码映射
+        const weatherCodes = {
+            0: { text: '晴朗', icon: 'bi-sun-fill', color: '#ff9500' },
+            1: { text: '主要晴朗', icon: 'bi-sun-fill', color: '#ff9500' },
+            2: { text: '多云', icon: 'bi-cloud-sun-fill', color: '#ff9500' },
+            3: { text: '阴天', icon: 'bi-cloud-fill', color: '#8e8e93' },
+            45: { text: '雾', icon: 'bi-fog', color: '#8e8e93' },
+            48: { text: '沉积雾凇', icon: 'bi-fog', color: '#8e8e93' },
+            51: { text: '毛毛雨', icon: 'bi-cloud-drizzle-fill', color: '#5ac8fa' },
+            53: { text: '中度毛毛雨', icon: 'bi-cloud-drizzle-fill', color: '#5ac8fa' },
+            55: { text: '密集毛毛雨', icon: 'bi-cloud-rain-fill', color: '#5ac8fa' },
+            61: { text: '小雨', icon: 'bi-cloud-rain-fill', color: '#5ac8fa' },
+            63: { text: '中雨', icon: 'bi-cloud-rain-fill', color: '#5ac8fa' },
+            65: { text: '大雨', icon: 'bi-cloud-rain-heavy-fill', color: '#5ac8fa' },
+            71: { text: '小雪', icon: 'bi-snow', color: '#a284dc' },
+            73: { text: '中雪', icon: 'bi-snow2', color: '#a284dc' },
+            75: { text: '大雪', icon: 'bi-snow3', color: '#a284dc' },
+            80: { text: '阵雨', icon: 'bi-cloud-rain-fill', color: '#5ac8fa' },
+            81: { text: '中阵雨', icon: 'bi-cloud-rain-fill', color: '#5ac8fa' },
+            82: { text: '大阵雨', icon: 'bi-cloud-rain-heavy-fill', color: '#5ac8fa' },
+            95: { text: '雷雨', icon: 'bi-cloud-lightning-fill', color: '#5ac8fa' },
+            96: { text: '雷雨伴冰雹', icon: 'bi-cloud-lightning-rain-fill', color: '#5ac8fa' },
+            99: { text: '强雷雨', icon: 'bi-cloud-lightning-rain-fill', color: '#5ac8fa' }
+        };
+
+        function getWeatherInfo(code) {
+            return weatherCodes[code] || { text: '未知', icon: 'bi-question-circle-fill', color: '#8e8e93' };
+        }
+
+        // 城市搜索逻辑 (使用 OpenMeteo 自带的地理编码)
+        let debounceTimer = null;
+        const cityInput = document.getElementById('cityInput');
+        const suggestionsList = document.getElementById('suggestions');
+
+        cityInput.addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            const query = cityInput.value.trim();
+            if (query.length < 2) {
+                suggestionsList.style.display = 'none';
+                return;
+            }
+            
+            debounceTimer = setTimeout(async () => {
+                try {
+                    // 限制搜索结果为中国 (country_codes=CN)
+                    const res = await fetch(`${GEO_URL}?name=${encodeURIComponent(query)}&count=5&language=zh&format=json&country_codes=CN`);
+                    const data = await res.json();
+                    
+                    if (data.results && data.results.length > 0) {
+                        let html = '';
+                        data.results.forEach(loc => {
+                            // 显示格式：城市名 (省份)
+                            const adminName = loc.admin1 ? `(${loc.admin1})` : '';
+                            html += `<li class="suggestion-item" onclick="selectCity('${loc.name}', ${loc.latitude}, ${loc.longitude})">
+                                <i class="bi bi-geo-alt text-success"></i> 
+                                <strong>${loc.name}</strong> 
+                                <small class="text-muted">${adminName}</small>
+                            </li>`;
+                        });
+                        suggestionsList.innerHTML = html;
+                        suggestionsList.style.display = 'block';
+                    } else {
+                        suggestionsList.style.display = 'none';
+                    }
+                } catch (e) {
+                    console.error("Search error", e);
+                    suggestionsList.style.display = 'none';
+                }
+            }, 500);
+        });
+
+        // 选择城市
+        function selectCity(name, lat, lon) {
+            cityInput.value = name;
+            suggestionsList.style.display = 'none';
+            currentCityName = name;
+            currentLat = lat;
+            currentLon = lon;
+            loadWeatherData();
+        }
+
+        // 点击查询按钮或回车
+        function searchAndLoad() {
+            suggestionsList.style.display = 'none';
+            const query = cityInput.value.trim();
+            if (!query) return;
+            
+            // 如果用户直接输了一个名字但没点下拉框，尝试强制搜索第一个结果
+            // 这里简化处理：如果用户没选，就提示他选，或者默认用之前的坐标
+            // 为了体验更好，我们假设用户如果没选，可能是想搜默认的或者之前的
+            // 但最稳妥的是：如果输入框变了但没选，重新搜一次取第一个？
+            // 简单起见：如果用户手动输入了但没点建议，我们提示“请从列表选择”或者尝试加载当前已知的
+            // 改进：如果输入框内容与当前城市名不同，且没有选中建议，尝试自动匹配第一个
+            // 这里为了代码简洁，如果用户直接回车，我们尝试再次搜索并自动选第一个
+            
+            showLoading(`正在搜索 ${query}...`);
+            
+            fetch(`${GEO_URL}?name=${encodeURIComponent(query)}&count=1&language=zh&format=json&country_codes=CN`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.results && data.results.length > 0) {
+                        const loc = data.results[0];
+                        selectCity(loc.name, loc.latitude, loc.longitude);
+                    } else {
+                        showError(`未找到城市 "${query}"，请尝试输入更准确的名字（如：甘井子区 -> 大连）`);
+                    }
+                })
+                .catch(e => showError("搜索失败，请检查网络"));
+        }
+
+        cityInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchAndLoad();
+        });
+
+        // 点击外部关闭下拉框
+        document.addEventListener('click', (e) => {
+            if (!cityInput.contains(e.target) && !suggestionsList.contains(e.target)) {
+                suggestionsList.style.display = 'none';
+            }
+        });
+
+        // 加载天气数据
+        async function loadWeatherData() {
+            showLoading(`正在加载 ${currentCityName} 的天气和土壤数据...`);
+
+            try {
+                const params = new URLSearchParams({
+                    latitude: currentLat,
+                    longitude: currentLon,
+                    current_weather: true,
+                    daily: ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'weathercode'],
+                    hourly: ['temperature_2m', 'relativehumidity_2m', 'windspeed_10m', 'soil_temperature_0cm', 'soil_temperature_6cm'],
+                    timezone: 'auto',
+                    forecast_days: 7
+                });
+
+                const res = await fetch(`${API_URL}?${params}`);
+                if (!res.ok) throw new Error(`HTTP 错误：${res.status}`);
+                
+                const data = await res.json();
+                renderWeather(data);
+                generateAdvice(data);
+            } catch (e) {
+                console.error(e);
+                showError("数据加载失败：" + e.message);
+            }
+        }
+
+        function renderWeather(data) {
+            const current = data.current_weather;
+            const info = getWeatherInfo(current.weathercode);
+            
+            // 获取最近一小时的土壤温度和湿度
+            const hourly = data.hourly;
+            // 简单匹配当前小时 (OpenMeteo 返回的是本地时间数组，直接按索引取)
+            const now = new Date();
+            const currentHourIndex = now.getHours(); 
+            
+            // 防御性编程：防止索引越界
+            const soilTemp0 = (hourly.soil_temperature_0cm && hourly.soil_temperature_0cm[currentHourIndex] !== undefined) 
+                              ? hourly.soil_temperature_0cm[currentHourIndex] 
+                              : (hourly.soil_temperature_0cm[0] || 0);
+            
+            const soilTemp6 = (hourly.soil_temperature_6cm && hourly.soil_temperature_6cm[currentHourIndex] !== undefined) 
+                              ? hourly.soil_temperature_6cm[currentHourIndex] 
+                              : (hourly.soil_temperature_6cm[0] || 0);
+            
+            const humidity = (hourly.relativehumidity_2m && hourly.relativehumidity_2m[currentHourIndex] !== undefined)
+                             ? hourly.relativehumidity_2m[currentHourIndex]
+                             : (hourly.relativehumidity_2m[0] || 0);
+
+            // 实时卡片
+            const currentHtml = `
+                <div class="text-center py-3">
+                    <h4 class="mb-3">${currentCityName}</h4>
+                    <i class="bi ${info.icon} weather-icon" style="color: ${info.color}"></i>
+                    <h1 class="display-2 fw-bold my-3">${Math.round(current.temperature)}℃</h1>
+                    <p class="fs-4 mb-3">${info.text}</p>
+                    
+                    <div class="mb-3">
+                        <span class="soil-temp-badge">
+                            <i class="bi bi-thermometer-half"></i> 地表土温：${soilTemp0.toFixed(1)}℃
+                        </span>
+                        <span class="soil-temp-badge ms-2" style="background:#a1887f">
+                            <i class="bi bi-box"></i> 6cm 土温：${soilTemp6.toFixed(1)}℃
+                        </span>
+                    </div>
+
+                    <div class="row g-2 mt-3">
+                        <div class="col-6">
+                            <div class="detail-item">
+                                <small><i class="bi bi-droplet"></i> 空气湿度</small>
+                                <div class="fs-5">${Math.round(humidity)}%</div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="detail-item">
+                                <small><i class="bi bi-wind"></i> 风速</small>
+                                <div class="fs-5">${current.windspeed} km/h</div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="detail-item">
+                                <small><i class="bi bi-compass"></i> 风向</small>
+                                <div class="fs-6">${current.winddirection}°</div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="detail-item">
+                                <small><i class="bi bi-eye"></i> 状态</small>
+                                <div class="fs-6">${current.is_day === 1 ? '白天' : '夜晚'}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3 small opacity-75">
+                        <i class="bi bi-clock"></i> 更新于：${new Date(current.time).toLocaleString()}
+                    </div>
+                </div>
+            `;
+
+            // 预报卡片
+            let forecastHtml = '<div class="row g-3">';
+            const daily = data.daily;
+            for (let i = 0; i < Math.min(7, daily.time.length); i++) {
+                const dateObj = new Date(daily.time[i]);
+                const isToday = i === 0;
+                const week = ['日','一','二','三','四','五','六'][dateObj.getDay()];
+                const dayInfo = getWeatherInfo(daily.weathercode[i]);
+                
+                forecastHtml += `
+                    <div class="col-6 col-md-3">
+                        <div class="card h-100 forecast-day ${isToday ? 'border-success border-3' : ''}">
+                            <div class="card-body">
+                                ${isToday ? '<span class="badge bg-success mb-2">今天</span>' : ''}
+                                <h6 class="mb-2">${dateObj.getMonth()+1}/${dateObj.getDate()} <small class="text-muted">周${week}</small></h6>
+                                <i class="bi ${dayInfo.icon} fs-2" style="color:${dayInfo.color}"></i>
+                                <div class="fw-bold mt-2">${Math.round(daily.temperature_2m_max[i])}° / ${Math.round(daily.temperature_2m_min[i])}°</div>
+                                <small class="text-muted d-block mt-1">${dayInfo.text}</small>
+                                <small class="text-success d-block" style="font-size:0.75rem">
+                                    降水：${daily.precipitation_sum[i]}mm
+                                </small>
+                            </div>
+                        </div>
+                    </div>`;
+            }
+            forecastHtml += '</div>';
+
+            document.getElementById('weatherResult').innerHTML = `
+                <div class="col-lg-5">
+                    <div class="card weather-card h-100">
+                        <div class="card-body">${currentHtml}</div>
+                    </div>
+                </div>
+                <div class="col-lg-7">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-header bg-white">
+                            <h5 class="mb-0"><i class="bi bi-calendar3"></i> 未来 7 天预报</h5>
+                            <small class="text-muted">数据源：Open-Meteo</small>
+                        </div>
+                        <div class="card-body">${forecastHtml}</div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('statusMessage').innerHTML = '';
+        }
+
+        function generateAdvice(data) {
+            const current = data.current_weather;
+            const temp = current.temperature;
+            const hourly = data.hourly;
+            const nowHour = new Date().getHours();
+            const soilTemp = (hourly.soil_temperature_6cm && hourly.soil_temperature_6cm[nowHour]) ? hourly.soil_temperature_6cm[nowHour] : 0;
+            const precip = data.daily.precipitation_sum[0];
+            
+            let advice = [];
+
+            if (temp < 5) advice.push({type:'warning', text:'⚠️ 低温预警：气温低于 5℃，注意防冻害，关闭通风口。'});
+            else if (temp > 32) advice.push({type:'warning', text:'⚠️ 高温预警：气温过高，开启遮阳网和通风。'});
+            else advice.push({type:'success', text:'✅ 气温适宜，利于作物生长。'});
+
+            if (soilTemp < 10) advice.push({type:'info', text:'🌱 地温偏低：6cm 地温低于 10℃，根系活动弱，建议停止浇水。'});
+            else if (soilTemp >= 15 && soilTemp <= 25) advice.push({type:'success', text:'🌱 地温适宜：根系活跃，可正常进行水肥管理。'});
+
+            if (precip > 5) advice.push({type:'warning', text:'🌧️ 今日有雨：预计降水较多，检查大棚排水。'});
+            if (current.windspeed > 25) advice.push({type:'warning', text:'💨 大风：风速较大，请加固棚膜。'});
+
+            let html = '<ul class="list-unstyled mb-0">';
+            advice.forEach(item => {
+                const bg = item.type === 'warning' ? 'bg-warning-subtle' : (item.type === 'success' ? 'bg-success-subtle' : 'bg-info-subtle');
+                html += `<li class="index-card border-${item.type} ${bg} p-3 mb-2 rounded">
+                    <i class="bi bi-${item.type==='warning'?'exclamation-triangle-fill':'check-circle-fill'} me-2"></i>${item.text}
+                </li>`;
+            });
+            html += '</ul>';
+
+            document.getElementById('adviceContent').innerHTML = html;
+            document.getElementById('agricultureAdvice').style.display = 'flex';
+        }
+
+        function showLoading(msg) {
+            document.getElementById('weatherResult').innerHTML = `
+                <div class="col-12 text-center py-5">
+                    <div class="spinner-border loading-spinner mb-3" role="status"></div>
+                    <p class="fs-5">${msg}</p>
+                </div>`;
+            document.getElementById('agricultureAdvice').style.display = 'none';
+        }
+
+        function showError(msg) {
+            document.getElementById('weatherResult').innerHTML = `
+                <div class="col-12">
+                    <div class="alert alert-danger text-center">
+                        <i class="bi bi-exclamation-triangle-fill"></i> ${msg}
+                    </div>
+                </div>`;
+            document.getElementById('agricultureAdvice').style.display = 'none';
+        }
+
+        // 页面加载自动运行：默认加载大连
+        window.onload = () => {
+            // 设置输入框默认值
+            cityInput.value = currentCityName;
+            loadWeatherData();
+        };
+    </script>
+</body>
+</html>
